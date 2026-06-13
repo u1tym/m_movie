@@ -113,6 +113,7 @@ export interface PlaybackStartResponse {
   completed: boolean
   status: string
   start_chunk: ChunkMeta
+  stream_token: string
 }
 
 export interface PlaybackState {

@@ -7,32 +7,80 @@ import {
 } from '../api/movie'
 import type { NextVideoBrief, VideoDetail } from '../types/movie'
 
+const MEDIA_TIMEOUT_MS = 120_000
+
+const videoErrorMessage = (video: HTMLVideoElement): string => {
+  const code = video.error?.code
+  if (code === MediaError.MEDIA_ERR_NETWORK) {
+    return '動画の取得に失敗しました（ネットワークまたは認証）'
+  }
+  if (code === MediaError.MEDIA_ERR_DECODE) {
+    return '動画形式が再生できません（MP4 の互換性を確認してください）'
+  }
+  if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+    return 'この端末では動画形式がサポートされていません'
+  }
+  return '動画の読み込みに失敗しました'
+}
+
 const waitForMediaEvent = (
   video: HTMLVideoElement,
-  eventName: 'loadedmetadata' | 'canplay',
+  eventName: 'loadedmetadata' | 'canplay' | 'seeked',
+  timeoutMs = MEDIA_TIMEOUT_MS,
 ): Promise<void> =>
   new Promise((resolve, reject) => {
     const ready =
       eventName === 'loadedmetadata'
         ? video.readyState >= HTMLMediaElement.HAVE_METADATA
-        : video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA
+        : eventName === 'canplay'
+          ? video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA
+          : false
     if (ready) {
       resolve()
       return
     }
-    const onEvent = (): void => {
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+    const cleanup = (): void => {
       video.removeEventListener(eventName, onEvent)
       video.removeEventListener('error', onError)
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId)
+      }
+    }
+
+    const onEvent = (): void => {
+      cleanup()
       resolve()
     }
     const onError = (): void => {
-      video.removeEventListener(eventName, onEvent)
-      video.removeEventListener('error', onError)
-      reject(new Error('動画の読み込みに失敗しました'))
+      cleanup()
+      reject(new Error(videoErrorMessage(video)))
     }
+
     video.addEventListener(eventName, onEvent)
     video.addEventListener('error', onError)
+    timeoutId = setTimeout(() => {
+      cleanup()
+      reject(new Error('動画の読み込みがタイムアウトしました'))
+    }, timeoutMs)
   })
+
+const seekVideo = async (video: HTMLVideoElement, positionMs: number): Promise<void> => {
+  const targetSec = positionMs / 1000
+  if (Math.abs(video.currentTime - targetSec) < 0.5) {
+    return
+  }
+  const seekPromise = waitForMediaEvent(video, 'seeked', 30_000)
+  video.currentTime = targetSec
+  try {
+    await seekPromise
+  } catch {
+    // iOS 等で seeked が発火しない場合
+    await waitForMediaEvent(video, 'canplay', 30_000)
+  }
+}
 
 export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
   const loading = ref(false)
@@ -83,17 +131,19 @@ export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
       const el = videoRef.value
       if (!el) return
 
-      el.src = getVideoStreamUrl(detail.video_id)
+      // video 要素は fetch と違い Cookie を送れないことがあるため、
+      // playback/start で発行した stream_token を URL に付与する
+      el.src = getVideoStreamUrl(detail.video_id, start.stream_token)
       await waitForMediaEvent(el, 'loadedmetadata')
-
-      if (start.position_ms > 0) {
-        el.currentTime = start.position_ms / 1000
-      }
-
       await waitForMediaEvent(el, 'canplay')
 
+      if (start.position_ms > 0) {
+        await seekVideo(el, start.position_ms)
+        await waitForMediaEvent(el, 'canplay')
+      }
+
       await el.play().catch(() => {
-        // 自動再生ブロックは許容
+        // 自動再生ブロックは許容（ユーザーが再生ボタンを押せる）
       })
 
       const next = await fetchNextVideo(detail.video_id)
@@ -123,7 +173,7 @@ export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
   const seekTo = async (positionMs: number): Promise<void> => {
     const el = videoRef.value
     if (!el) return
-    el.currentTime = positionMs / 1000
+    await seekVideo(el, positionMs)
     await savePosition()
   }
 

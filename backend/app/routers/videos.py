@@ -2,8 +2,10 @@ from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
-from app.dependencies import get_aid_dependency
+from app.dependencies import get_aid_dependency, get_current_aid
+from app.security.stream_token import verify_stream_token
 from app.schemas.video import (
     ChunkListResponse,
     ChunkUploadResponse,
@@ -19,6 +21,14 @@ from app.schemas.video import (
 from app.services import video_service
 
 router = APIRouter(prefix="/videos", tags=["videos"])
+
+
+def _get_stream_aid(video_id: int, request: Request, token: str | None = Query(None)) -> int:
+    if settings.debug:
+        return settings.debug_aid
+    if token:
+        return verify_stream_token(token, video_id)
+    return get_current_aid(request)
 
 
 @router.get("", response_model=VideoListResponse)
@@ -106,13 +116,15 @@ def complete_upload(
 def stream_video(
     video_id: int,
     request: Request,
+    token: str | None = Query(None),
     db: Session = Depends(get_db),
-    aid: int = Depends(get_aid_dependency()),
+    aid: int = Depends(_get_stream_aid),
 ) -> StreamingResponse:
     result = video_service.stream_video(db, aid, video_id, request.headers.get("range"))
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(result.content_length),
+        "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length",
     }
     if result.content_range:
         headers["Content-Range"] = result.content_range

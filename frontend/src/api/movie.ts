@@ -111,8 +111,10 @@ export const fetchChunkBlob = (videoId: number, chunkIndex: number): Promise<Blo
   movieFetchBlob(`/videos/${videoId}/chunks/${chunkIndex}`)
 
 /** Range 対応ストリーム URL（video 要素の src に指定して逐次再生） */
-export const getVideoStreamUrl = (videoId: number): string =>
-  `${getMovieApiBase()}/videos/${videoId}/stream`
+export const getVideoStreamUrl = (videoId: number, streamToken: string): string => {
+  const url = `${getMovieApiBase()}/videos/${videoId}/stream`
+  return `${url}?token=${encodeURIComponent(streamToken)}`
+}
 
 export const fetchThumbnailBlob = (videoId: number): Promise<Blob> =>
   movieFetchBlob(`/videos/${videoId}/thumbnail`)

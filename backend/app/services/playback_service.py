@@ -20,6 +20,7 @@ from app.schemas.playback import (
     PlaybackStateUpdateRequest,
 )
 from app.schemas import normalize_page, build_pagination
+from app.security.stream_token import create_stream_token
 from app.services.video_service import (
     _get_owned_video,
     chunk_to_meta,
@@ -73,6 +74,7 @@ def start_playback(
         completed=playback.completed,
         status=video.status,
         start_chunk=chunk_to_meta(chunk),
+        stream_token=create_stream_token(aid, video.video_id),
     )
 
 

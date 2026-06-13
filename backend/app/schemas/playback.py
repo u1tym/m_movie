@@ -24,6 +24,7 @@ class PlaybackStartResponse(BaseModel):
     completed: bool
     status: str
     start_chunk: ChunkMetaResponse
+    stream_token: str
 
 
 class PlaybackSeekResponse(BaseModel):
