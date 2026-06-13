@@ -498,28 +498,33 @@ def _ordered_chunks(db: Session, video_id: int) -> list[VideoChunk]:
     )
 
 
-def _build_chunk_offsets(chunks: list[VideoChunk]) -> list[tuple[VideoChunk, int, int]]:
-    result: list[tuple[VideoChunk, int, int]] = []
+def _build_chunk_cache(chunks: list[VideoChunk]) -> list[tuple[bytes, int, int]]:
+    """セッション内でバイナリを読み込み、(data, start_byte, end_byte) のリストを返す。"""
+    cache: list[tuple[bytes, int, int]] = []
     offset = 0
     for chunk in chunks:
-        result.append((chunk, offset, offset + chunk.byte_length))
-        offset += chunk.byte_length
-    return result
+        data = bytes(chunk.data)
+        cache.append((data, offset, offset + len(data)))
+        offset += len(data)
+    return cache
 
 
-def _iter_byte_range(
-    chunk_offsets: list[tuple[VideoChunk, int, int]],
+def _slice_byte_range(
+    chunk_cache: list[tuple[bytes, int, int]],
     start: int,
     end: int,
-) -> Iterator[bytes]:
-    for chunk, chunk_start, chunk_end in chunk_offsets:
+) -> bytes:
+    parts: list[bytes] = []
+    for data, chunk_start, chunk_end in chunk_cache:
         if chunk_end <= start:
             continue
         if chunk_start > end:
             break
-        local_start = start - chunk_start
-        local_end = min(chunk.byte_length, end - chunk_start + 1)
-        yield chunk.data[local_start:local_end]
+        local_start = max(0, start - chunk_start)
+        local_end = min(len(data), end - chunk_start + 1)
+        if local_start < local_end:
+            parts.append(data[local_start:local_end])
+    return b"".join(parts)
 
 
 def stream_video(
@@ -535,19 +540,19 @@ def stream_video(
             message="再生可能な動画ではありません",
             status_code=422,
         )
-    if video.file_size_bytes <= 0:
-        raise AppError(
-            code="UNPROCESSABLE",
-            message="再生可能なデータがありません",
-            status_code=422,
-        )
 
     chunks = _ordered_chunks(db, video_id)
     if not chunks:
         raise AppError(code="NOT_FOUND", message="チャンクが見つかりません", status_code=404)
 
-    total = video.file_size_bytes
-    chunk_offsets = _build_chunk_offsets(chunks)
+    chunk_cache = _build_chunk_cache(chunks)
+    total = chunk_cache[-1][2] if chunk_cache else 0
+    if total <= 0:
+        raise AppError(
+            code="UNPROCESSABLE",
+            message="再生可能なデータがありません",
+            status_code=422,
+        )
 
     if range_header:
         match = _RANGE_RE.match(range_header.strip())
@@ -566,19 +571,20 @@ def stream_video(
                 status_code=416,
             )
         end = min(end, total - 1)
-        length = end - start + 1
+        body_bytes = _slice_byte_range(chunk_cache, start, end)
         return VideoStreamResult(
             status_code=206,
             media_type=video.mime_type,
-            content_length=length,
-            content_range=f"bytes {start}-{end}/{total}",
-            body=_iter_byte_range(chunk_offsets, start, end),
+            content_length=len(body_bytes),
+            content_range=f"bytes {start}-{start + len(body_bytes) - 1}/{total}",
+            body=iter([body_bytes]),
         )
 
+    body_bytes = _slice_byte_range(chunk_cache, 0, total - 1)
     return VideoStreamResult(
         status_code=200,
         media_type=video.mime_type,
-        content_length=total,
+        content_length=len(body_bytes),
         content_range=None,
-        body=_iter_byte_range(chunk_offsets, 0, total - 1),
+        body=iter([body_bytes]),
     )
