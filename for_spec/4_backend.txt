@@ -1,0 +1,28 @@
+APIを実装して。
+
+DBの接続先は、.envから取得するようにする。
+
+以下の値で、.envを作成して
+Server: localhost
+Database: tamtdb
+Port: 5432
+Username: tamtuser
+Password: TAMTTAMT
+として。
+
+APIの仕様は、API_MOVIE_SPEC.mdを参照。
+
+アカウントID（ユーザID）に関しては、
+API_LOGIN_SPEC.md
+JWT_USERNAME_TECH_SPEC.md
+を参照して。
+
+.envに、デバッグ環境か否かの識別を追加して、デバッグ環境の場合には、.envに記載されたaidをユーザIDとして使用するようにして。
+
+pythonで、型のヒント句を付けて。
+fastapiで実装して。
+
+フォルダ backendを作成して、その中を基点として作って。
+
+不明点は聞いて。
+
