@@ -12,6 +12,13 @@ import {
   uploadVideoFile,
 } from '../api/movie'
 import type { Genre, Series } from '../types/movie'
+import {
+  detectMp4VideoCodec,
+  ffmpegH264Command,
+  hevcUploadWarning,
+  mp4VideoCodecLabel,
+  type Mp4VideoCodec,
+} from '../utils/mp4Codec'
 
 const router = useRouter()
 
@@ -32,6 +39,8 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const progress = ref('')
 const newGenreName = ref('')
+const detectedCodec = ref<Mp4VideoCodec | null>(null)
+const codecWarning = ref<string | null>(null)
 
 const loadMasters = async (): Promise<void> => {
   const [g, s] = await Promise.all([fetchGenres(), fetchSeries(1, 100)])
@@ -43,9 +52,23 @@ onMounted(() => {
   void loadMasters()
 })
 
-const onFileChange = (e: Event): void => {
+const onFileChange = async (e: Event): Promise<void> => {
   const input = e.target as HTMLInputElement
   file.value = input.files?.[0] ?? null
+  detectedCodec.value = null
+  codecWarning.value = null
+
+  if (!file.value) return
+
+  try {
+    const codec = await detectMp4VideoCodec(file.value)
+    detectedCodec.value = codec
+    if (codec === 'hevc') {
+      codecWarning.value = hevcUploadWarning
+    }
+  } catch {
+    detectedCodec.value = 'unknown'
+  }
 }
 
 const onThumbChange = (e: Event): void => {
@@ -76,6 +99,11 @@ const addGenre = async (): Promise<void> => {
 const submit = async (): Promise<void> => {
   if (!title.value.trim() || !file.value) {
     error.value = 'タイトルと動画ファイルは必須です'
+    return
+  }
+
+  if (detectedCodec.value === 'hevc') {
+    error.value = hevcUploadWarning
     return
   }
 
@@ -144,6 +172,14 @@ const submit = async (): Promise<void> => {
       <div class="field">
         <label>動画ファイル (MP4) *</label>
         <input type="file" accept="video/mp4,video/*" required @change="onFileChange" />
+        <p v-if="detectedCodec" class="codec-info">
+          検出コーデック: {{ mp4VideoCodecLabel(detectedCodec) }}
+        </p>
+        <p v-if="codecWarning" class="codec-warning">{{ codecWarning }}</p>
+        <p v-if="codecWarning" class="codec-command">
+          変換例: <code>{{ ffmpegH264Command() }}</code>
+        </p>
+        <p class="codec-hint">iPhone 対応: H.264 (libx264) + AAC、`-movflags +faststart` 推奨</p>
       </div>
 
       <div class="field">
@@ -201,7 +237,7 @@ const submit = async (): Promise<void> => {
         </div>
       </div>
 
-      <button class="btn" type="submit" :disabled="loading">
+      <button class="btn" type="submit" :disabled="loading || detectedCodec === 'hevc'">
         {{ loading ? '登録中...' : '登録する' }}
       </button>
     </form>
@@ -258,5 +294,37 @@ h1 {
 .progress-text {
   color: var(--muted);
   margin-bottom: 12px;
+}
+
+.codec-info {
+  margin: 6px 0 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.codec-warning {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #fecaca;
+  font-size: 0.875rem;
+}
+
+.codec-command {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.codec-command code {
+  font-family: ui-monospace, monospace;
+}
+
+.codec-hint {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 </style>

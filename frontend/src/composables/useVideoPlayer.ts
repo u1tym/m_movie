@@ -6,6 +6,7 @@ import {
   startPlayback,
 } from '../api/movie'
 import type { NextVideoBrief, VideoDetail } from '../types/movie'
+import { hevcPlaybackError } from '../utils/mp4Codec'
 
 const MEDIA_TIMEOUT_MS = 120_000
 
@@ -15,10 +16,10 @@ const videoErrorMessage = (video: HTMLVideoElement): string => {
     return '動画の取得に失敗しました（ネットワークまたは認証）'
   }
   if (code === MediaError.MEDIA_ERR_DECODE) {
-    return '動画形式が再生できません（MP4 の互換性を確認してください）'
+    return '動画形式が再生できません（H.264 + AAC の MP4 を推奨）'
   }
   if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-    return 'この端末では動画形式がサポートされていません'
+    return hevcPlaybackError
   }
   return '動画の読み込みに失敗しました'
 }
