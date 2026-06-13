@@ -1,0 +1,4 @@
+DB_MOVIE_SPEC.mdをもとに、テーブル作成用のSQLファイルをDBディレクトリ下に1_db.sqlを作成して。
+
+アカウントIDは、既存テーブル public.accountsの主キーidを外部キーで参照するようにして。
+
