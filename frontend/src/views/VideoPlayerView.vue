@@ -22,6 +22,7 @@ const {
   nextVideo,
   loadProgress,
   loadTotal,
+  buffering,
   load,
   togglePlay,
   seekTo,
@@ -98,6 +99,10 @@ const goEdit = (): void => {
       />
       <p v-if="loading" class="loading">
         読み込み中...
+        <span v-if="loadTotal > 0">({{ loadProgress }}/{{ loadTotal }} チャンク)</span>
+      </p>
+      <p v-else-if="buffering" class="loading">
+        バッファリング中...
         <span v-if="loadTotal > 0">({{ loadProgress }}/{{ loadTotal }} チャンク)</span>
       </p>
     </div>
