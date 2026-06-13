@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -100,6 +100,28 @@ def complete_upload(
     aid: int = Depends(get_aid_dependency()),
 ) -> VideoCompleteResponse:
     return video_service.complete_upload(db, aid, video_id, body)
+
+
+@router.get("/{video_id}/stream")
+def stream_video(
+    video_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    aid: int = Depends(get_aid_dependency()),
+) -> StreamingResponse:
+    result = video_service.stream_video(db, aid, video_id, request.headers.get("range"))
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(result.content_length),
+    }
+    if result.content_range:
+        headers["Content-Range"] = result.content_range
+    return StreamingResponse(
+        result.body,
+        status_code=result.status_code,
+        media_type=result.media_type,
+        headers=headers,
+    )
 
 
 @router.get("/{video_id}/chunks", response_model=ChunkListResponse)

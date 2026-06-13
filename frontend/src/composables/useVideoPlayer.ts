@@ -1,41 +1,53 @@
 import { ref, onUnmounted, type Ref } from 'vue'
 import {
-  buildVideoBlobUrl,
-  fetchChunkList,
   fetchNextVideo,
+  getVideoStreamUrl,
   savePlaybackState,
   startPlayback,
 } from '../api/movie'
-import { isMseSupported, startMseLoader, type MseLoaderHandle } from '../utils/mseVideoLoader'
 import type { NextVideoBrief, VideoDetail } from '../types/movie'
+
+const waitForMediaEvent = (
+  video: HTMLVideoElement,
+  eventName: 'loadedmetadata' | 'canplay',
+): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const ready =
+      eventName === 'loadedmetadata'
+        ? video.readyState >= HTMLMediaElement.HAVE_METADATA
+        : video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA
+    if (ready) {
+      resolve()
+      return
+    }
+    const onEvent = (): void => {
+      video.removeEventListener(eventName, onEvent)
+      video.removeEventListener('error', onError)
+      resolve()
+    }
+    const onError = (): void => {
+      video.removeEventListener(eventName, onEvent)
+      video.removeEventListener('error', onError)
+      reject(new Error('動画の読み込みに失敗しました'))
+    }
+    video.addEventListener(eventName, onEvent)
+    video.addEventListener('error', onError)
+  })
 
 export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
   const loading = ref(false)
   const error = ref<string | null>(null)
-  const blobUrl = ref<string | null>(null)
   const playbackInfo = ref<{ position_ms: number; duration_ms: number } | null>(null)
   const nextVideo = ref<NextVideoBrief | null>(null)
-  const loadProgress = ref(0)
-  const loadTotal = ref(0)
   const buffering = ref(false)
 
   let saveTimer: ReturnType<typeof setInterval> | null = null
   let currentVideoId: number | null = null
-  let mseLoader: MseLoaderHandle | null = null
-  let abortController: AbortController | null = null
 
   const cleanup = (): void => {
     if (saveTimer) {
       clearInterval(saveTimer)
       saveTimer = null
-    }
-    abortController?.abort()
-    abortController = null
-    mseLoader?.destroy()
-    mseLoader = null
-    if (blobUrl.value) {
-      URL.revokeObjectURL(blobUrl.value)
-      blobUrl.value = null
     }
     if (videoRef.value) {
       videoRef.value.pause()
@@ -54,87 +66,10 @@ export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
     }
   }
 
-  const startMsePlayback = async (
-    detail: VideoDetail,
-    startPositionMs: number,
-  ): Promise<void> => {
-    const el = videoRef.value
-    if (!el) return
-
-    const { items } = await fetchChunkList(detail.video_id)
-    if (items.length === 0) {
-      throw new Error('再生可能なチャンクがありません')
-    }
-
-    loadTotal.value = items.length
-    abortController = new AbortController()
-    mseLoader = startMseLoader({
-      video: el,
-      videoId: detail.video_id,
-      items,
-      mimeType: detail.mime_type,
-      startPositionMs,
-      signal: abortController.signal,
-      onProgress: (loaded, total) => {
-        loadProgress.value = loaded
-        loadTotal.value = total
-        buffering.value = loaded < total
-      },
-    })
-
-    await mseLoader.waitUntilReady
-    buffering.value = loadProgress.value < loadTotal.value
-
-    await el.play().catch(() => {
-      // 自動再生ブロックは許容
-    })
-
-    void mseLoader.waitUntilComplete
-      .then(() => {
-        buffering.value = false
-      })
-      .catch((e) => {
-        if (!abortController?.signal.aborted) {
-          error.value = e instanceof Error ? e.message : '動画の読み込みに失敗しました'
-        }
-      })
-  }
-
-  const startBlobPlayback = async (
-    detail: VideoDetail,
-    startPositionMs: number,
-  ): Promise<void> => {
-    const el = videoRef.value
-    if (!el) return
-
-    const url = await buildVideoBlobUrl(
-      detail.video_id,
-      detail.mime_type,
-      (loaded, total) => {
-        loadProgress.value = loaded
-        loadTotal.value = total
-      },
-    )
-    blobUrl.value = url
-    el.src = url
-
-    await new Promise<void>((resolve, reject) => {
-      el.onloadedmetadata = () => resolve()
-      el.onerror = () => reject(new Error('動画の読み込みに失敗しました'))
-    })
-
-    el.currentTime = startPositionMs / 1000
-    await el.play().catch(() => {
-      // 自動再生ブロックは許容
-    })
-  }
-
   const load = async (detail: VideoDetail, resume = true): Promise<void> => {
     cleanup()
     loading.value = true
     error.value = null
-    loadProgress.value = 0
-    loadTotal.value = 0
     buffering.value = false
     currentVideoId = detail.video_id
 
@@ -145,22 +80,21 @@ export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
         duration_ms: start.duration_ms,
       }
 
-      if (isMseSupported()) {
-        try {
-          await startMsePlayback(detail, start.position_ms)
-        } catch {
-          // moov が末尾にある MP4 等で MSE が使えない場合は従来方式へ
-          if (videoRef.value) {
-            videoRef.value.removeAttribute('src')
-            videoRef.value.load()
-          }
-          mseLoader?.destroy()
-          mseLoader = null
-          await startBlobPlayback(detail, start.position_ms)
-        }
-      } else {
-        await startBlobPlayback(detail, start.position_ms)
+      const el = videoRef.value
+      if (!el) return
+
+      el.src = getVideoStreamUrl(detail.video_id)
+      await waitForMediaEvent(el, 'loadedmetadata')
+
+      if (start.position_ms > 0) {
+        el.currentTime = start.position_ms / 1000
       }
+
+      await waitForMediaEvent(el, 'canplay')
+
+      await el.play().catch(() => {
+        // 自動再生ブロックは許容
+      })
 
       const next = await fetchNextVideo(detail.video_id)
       nextVideo.value = next.has_next ? next.video : null
@@ -201,22 +135,29 @@ export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
     void savePosition(true)
   }
 
+  const onWaiting = (): void => {
+    buffering.value = true
+  }
+
+  const onPlaying = (): void => {
+    buffering.value = false
+  }
+
   onUnmounted(cleanup)
 
   return {
     loading,
     error,
-    blobUrl,
     playbackInfo,
     nextVideo,
-    loadProgress,
-    loadTotal,
     buffering,
     load,
     togglePlay,
     seekTo,
     onPause,
     onEnded,
+    onWaiting,
+    onPlaying,
     savePosition,
     cleanup,
   }

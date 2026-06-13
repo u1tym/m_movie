@@ -20,14 +20,14 @@ const {
   error,
   playbackInfo,
   nextVideo,
-  loadProgress,
-  loadTotal,
   buffering,
   load,
   togglePlay,
   seekTo,
   onPause,
   onEnded,
+  onWaiting,
+  onPlaying,
 } = useVideoPlayer(videoEl)
 
 const videoId = computed(() => Number(props.id || route.params.id))
@@ -96,15 +96,11 @@ const goEdit = (): void => {
         @pause="onPause"
         @ended="onEnded"
         @timeupdate="onTimeUpdate"
+        @waiting="onWaiting"
+        @playing="onPlaying"
       />
-      <p v-if="loading" class="loading">
-        読み込み中...
-        <span v-if="loadTotal > 0">({{ loadProgress }}/{{ loadTotal }} チャンク)</span>
-      </p>
-      <p v-else-if="buffering" class="loading">
-        バッファリング中...
-        <span v-if="loadTotal > 0">({{ loadProgress }}/{{ loadTotal }} チャンク)</span>
-      </p>
+      <p v-if="loading" class="loading">読み込み中...</p>
+      <p v-else-if="buffering" class="loading">バッファリング中...</p>
     </div>
 
     <div v-if="playbackInfo" class="controls card">

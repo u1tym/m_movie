@@ -15,6 +15,7 @@ import type {
   VideoSummary,
   VideoUpdatePayload,
 } from '../types/movie'
+import { getMovieApiBase } from '../config'
 import { movieFetchBlob, movieRequest } from './client'
 
 // --- Genres ---
@@ -108,6 +109,10 @@ export const fetchChunkList = (
 
 export const fetchChunkBlob = (videoId: number, chunkIndex: number): Promise<Blob> =>
   movieFetchBlob(`/videos/${videoId}/chunks/${chunkIndex}`)
+
+/** Range 対応ストリーム URL（video 要素の src に指定して逐次再生） */
+export const getVideoStreamUrl = (videoId: number): string =>
+  `${getMovieApiBase()}/videos/${videoId}/stream`
 
 export const fetchThumbnailBlob = (videoId: number): Promise<Blob> =>
   movieFetchBlob(`/videos/${videoId}/thumbnail`)
