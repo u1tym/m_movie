@@ -1,13 +1,16 @@
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+# backend ディレクトリで uvicorn を起動する前提で、カレントディレクトリの .env を読む
+_ENV_FILE = Path.cwd() / ".env"
+_env_file: str | None = str(_ENV_FILE) if _ENV_FILE.is_file() else None
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(_REPO_ROOT / ".env"),
+        env_file=_env_file,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -25,7 +28,16 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     cookie_name: str = "access_token"
 
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
+    @field_validator("debug", mode="before")
+    @classmethod
+    def parse_debug(cls, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
     @property
     def database_url(self) -> str:
@@ -40,3 +52,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# 起動時ログ用
+loaded_env_file: str | None = _env_file
