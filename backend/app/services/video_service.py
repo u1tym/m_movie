@@ -6,6 +6,7 @@ from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.database import SessionLocal
 from app.dependencies import AppError
 from app.models import Genre, PlaybackState, Series, Thumbnail, Video, VideoChunk, VideoGenre
 from app.schemas.playback import ChunkMetaResponse
@@ -488,43 +489,78 @@ class VideoStreamResult:
     body: Iterator[bytes]
 
 
-def _ordered_chunks(db: Session, video_id: int) -> list[VideoChunk]:
-    return list(
-        db.scalars(
-            select(VideoChunk)
-            .where(VideoChunk.video_id == video_id)
-            .order_by(VideoChunk.chunk_index)
-        ).all()
-    )
+@dataclass(frozen=True)
+class ChunkLayout:
+    chunk_index: int
+    start_byte: int
+    end_byte: int
+    byte_length: int
 
 
-def _build_chunk_cache(chunks: list[VideoChunk]) -> list[tuple[bytes, int, int]]:
-    """セッション内でバイナリを読み込み、(data, start_byte, end_byte) のリストを返す。"""
-    cache: list[tuple[bytes, int, int]] = []
+def _get_chunk_layout(db: Session, video_id: int) -> list[ChunkLayout]:
+    """チャンクのバイナリは読まず、オフセット情報だけを構築する。"""
+    rows = db.execute(
+        select(VideoChunk.chunk_index, VideoChunk.byte_length)
+        .where(VideoChunk.video_id == video_id)
+        .order_by(VideoChunk.chunk_index)
+    ).all()
+    layout: list[ChunkLayout] = []
     offset = 0
-    for chunk in chunks:
-        data = bytes(chunk.data)
-        cache.append((data, offset, offset + len(data)))
-        offset += len(data)
-    return cache
+    for chunk_index, byte_length in rows:
+        layout.append(
+            ChunkLayout(
+                chunk_index=chunk_index,
+                start_byte=offset,
+                end_byte=offset + byte_length,
+                byte_length=byte_length,
+            )
+        )
+        offset += byte_length
+    return layout
 
 
-def _slice_byte_range(
-    chunk_cache: list[tuple[bytes, int, int]],
+def _calc_range_length(layout: list[ChunkLayout], start: int, end: int) -> int:
+    length = 0
+    for item in layout:
+        if item.end_byte <= start:
+            continue
+        if item.start_byte > end:
+            break
+        overlap_start = max(start, item.start_byte)
+        overlap_end = min(end, item.end_byte - 1)
+        length += overlap_end - overlap_start + 1
+    return length
+
+
+def _iter_byte_range(
+    video_id: int,
+    layout: list[ChunkLayout],
     start: int,
     end: int,
-) -> bytes:
-    parts: list[bytes] = []
-    for data, chunk_start, chunk_end in chunk_cache:
-        if chunk_end <= start:
-            continue
-        if chunk_start > end:
-            break
-        local_start = max(0, start - chunk_start)
-        local_end = min(len(data), end - chunk_start + 1)
-        if local_start < local_end:
-            parts.append(data[local_start:local_end])
-    return b"".join(parts)
+) -> Iterator[bytes]:
+    """要求範囲に重なるチャンクだけ DB から読み、逐次 yield する。"""
+    db = SessionLocal()
+    try:
+        for item in layout:
+            if item.end_byte <= start:
+                continue
+            if item.start_byte > end:
+                break
+            data = db.scalar(
+                select(VideoChunk.data).where(
+                    VideoChunk.video_id == video_id,
+                    VideoChunk.chunk_index == item.chunk_index,
+                )
+            )
+            if data is None:
+                continue
+            chunk_bytes = bytes(data)
+            local_start = max(0, start - item.start_byte)
+            local_end = min(len(chunk_bytes), end - item.start_byte + 1)
+            if local_start < local_end:
+                yield chunk_bytes[local_start:local_end]
+    finally:
+        db.close()
 
 
 def stream_video(
@@ -541,12 +577,11 @@ def stream_video(
             status_code=422,
         )
 
-    chunks = _ordered_chunks(db, video_id)
-    if not chunks:
+    layout = _get_chunk_layout(db, video_id)
+    if not layout:
         raise AppError(code="NOT_FOUND", message="チャンクが見つかりません", status_code=404)
 
-    chunk_cache = _build_chunk_cache(chunks)
-    total = chunk_cache[-1][2] if chunk_cache else 0
+    total = layout[-1].end_byte
     if total <= 0:
         raise AppError(
             code="UNPROCESSABLE",
@@ -571,20 +606,19 @@ def stream_video(
                 status_code=416,
             )
         end = min(end, total - 1)
-        body_bytes = _slice_byte_range(chunk_cache, start, end)
+        content_length = _calc_range_length(layout, start, end)
         return VideoStreamResult(
             status_code=206,
             media_type=video.mime_type,
-            content_length=len(body_bytes),
-            content_range=f"bytes {start}-{start + len(body_bytes) - 1}/{total}",
-            body=iter([body_bytes]),
+            content_length=content_length,
+            content_range=f"bytes {start}-{start + content_length - 1}/{total}",
+            body=_iter_byte_range(video_id, layout, start, end),
         )
 
-    body_bytes = _slice_byte_range(chunk_cache, 0, total - 1)
     return VideoStreamResult(
         status_code=200,
         media_type=video.mime_type,
-        content_length=len(body_bytes),
+        content_length=total,
         content_range=None,
-        body=iter([body_bytes]),
+        body=_iter_byte_range(video_id, layout, 0, total - 1),
     )
