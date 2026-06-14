@@ -102,6 +102,16 @@ export const completeUpload = (
     body: JSON.stringify({ duration_ms: durationMs, chunk_count: chunkCount }),
   })
 
+/** 既存動画のファイル置き換え準備（旧チャンク削除・uploading へ） */
+export const prepareVideoReplace = (
+  videoId: number,
+  body: { duration_ms: number; mime_type?: string },
+): Promise<{ video_id: number; status: string; chunk_count: number }> =>
+  movieRequest(`/videos/${videoId}/replace/prepare`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
 export const fetchChunkList = (
   videoId: number,
 ): Promise<{ video_id: number; chunk_count: number; items: ChunkMeta[] }> =>

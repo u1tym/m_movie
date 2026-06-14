@@ -70,6 +70,17 @@ class VideoUpdateRequest(BaseModel):
     genre_ids: list[int] | None = None
 
 
+class VideoReplacePrepareRequest(BaseModel):
+    duration_ms: int = Field(ge=1, le=14_400_000)
+    mime_type: str = Field(default="video/mp4", max_length=100)
+
+
+class VideoReplacePrepareResponse(BaseModel):
+    video_id: int
+    status: str
+    chunk_count: int
+
+
 class ChunkUploadResponse(BaseModel):
     video_id: int
     chunk_index: int

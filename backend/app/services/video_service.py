@@ -23,6 +23,8 @@ from app.schemas.video import (
     VideoCreateResponse,
     VideoDetailResponse,
     VideoListResponse,
+    VideoReplacePrepareRequest,
+    VideoReplacePrepareResponse,
     VideoSummaryResponse,
     VideoUpdateRequest,
 )
@@ -272,6 +274,35 @@ def update_video(db: Session, aid: int, video_id: int, body: VideoUpdateRequest)
         ) from exc
     db.refresh(video)
     return get_video_detail(db, aid, video_id)
+
+
+def prepare_file_replace(
+    db: Session, aid: int, video_id: int, body: VideoReplacePrepareRequest
+) -> VideoReplacePrepareResponse:
+    video = _get_owned_video(db, aid, video_id)
+    if video.status == "deleted":
+        raise AppError(code="NOT_FOUND", message="動画が見つかりません", status_code=404)
+
+    db.query(VideoChunk).filter(VideoChunk.video_id == video_id).delete()
+
+    video.chunk_count = 0
+    video.file_size_bytes = 0
+    video.status = "uploading"
+    video.duration_ms = body.duration_ms
+    video.mime_type = body.mime_type
+
+    playback = _get_playback_for_video(db, aid, video_id)
+    if playback is not None:
+        playback.position_ms = 0
+        playback.completed = False
+
+    db.commit()
+    db.refresh(video)
+    return VideoReplacePrepareResponse(
+        video_id=video.video_id,
+        status=video.status,
+        chunk_count=video.chunk_count,
+    )
 
 
 def delete_video(db: Session, aid: int, video_id: int) -> None:

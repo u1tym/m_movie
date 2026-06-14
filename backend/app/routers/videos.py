@@ -16,6 +16,8 @@ from app.schemas.video import (
     VideoCreateResponse,
     VideoDetailResponse,
     VideoListResponse,
+    VideoReplacePrepareRequest,
+    VideoReplacePrepareResponse,
     VideoUpdateRequest,
 )
 from app.services import video_service
@@ -84,6 +86,16 @@ def delete_video(
     aid: int = Depends(get_aid_dependency()),
 ) -> None:
     video_service.delete_video(db, aid, video_id)
+
+
+@router.post("/{video_id}/replace/prepare", response_model=VideoReplacePrepareResponse)
+def prepare_file_replace(
+    video_id: int,
+    body: VideoReplacePrepareRequest,
+    db: Session = Depends(get_db),
+    aid: int = Depends(get_aid_dependency()),
+) -> VideoReplacePrepareResponse:
+    return video_service.prepare_file_replace(db, aid, video_id, body)
 
 
 @router.post("/{video_id}/chunks", response_model=ChunkUploadResponse, status_code=201)

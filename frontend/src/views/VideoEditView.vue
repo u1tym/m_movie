@@ -8,11 +8,21 @@ import {
   fetchSeries,
   fetchThumbnailBlob,
   fetchVideo,
+  getVideoFileDurationMs,
+  prepareVideoReplace,
   updateVideo,
   uploadThumbnail,
+  uploadVideoFile,
 } from '../api/movie'
 import type { Genre, Series, VideoDetail } from '../types/movie'
 import { useEditMode } from '../composables/useEditMode'
+import {
+  detectMp4VideoCodec,
+  ffmpegH264Command,
+  hevcUploadWarning,
+  mp4VideoCodecLabel,
+  type Mp4VideoCodec,
+} from '../utils/mp4Codec'
 
 const props = defineProps<{ id: string }>()
 const route = useRoute()
@@ -25,6 +35,8 @@ const seriesList = ref<Series[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const uploadingThumb = ref(false)
+const replacingVideo = ref(false)
+const replaceProgress = ref('')
 const error = ref<string | null>(null)
 
 const title = ref('')
@@ -38,8 +50,23 @@ const newGenreName = ref('')
 const currentThumbUrl = ref<string | null>(null)
 const pendingThumbUrl = ref<string | null>(null)
 const thumbFile = ref<File | null>(null)
+const replaceFile = ref<File | null>(null)
+const replaceCodec = ref<Mp4VideoCodec | null>(null)
+const replaceCodecWarning = ref<string | null>(null)
 
 const videoId = (): number => Number(props.id || route.params.id)
+
+const formatFileSize = (bytes: number): string => {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const formatDuration = (ms: number): string => {
+  const totalSec = Math.floor(ms / 1000)
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
 
 const revokeThumbUrls = (): void => {
   if (currentThumbUrl.value) {
@@ -113,6 +140,75 @@ const onThumbChange = (e: Event): void => {
   thumbFile.value = file
   if (file) {
     pendingThumbUrl.value = URL.createObjectURL(file)
+  }
+}
+
+const onReplaceFileChange = async (e: Event): Promise<void> => {
+  const input = e.target as HTMLInputElement
+  replaceFile.value = input.files?.[0] ?? null
+  replaceCodec.value = null
+  replaceCodecWarning.value = null
+
+  if (!replaceFile.value) return
+
+  try {
+    const codec = await detectMp4VideoCodec(replaceFile.value)
+    replaceCodec.value = codec
+    if (codec === 'hevc') {
+      replaceCodecWarning.value = hevcUploadWarning
+    }
+  } catch {
+    replaceCodec.value = 'unknown'
+  }
+}
+
+const replaceVideoFile = async (): Promise<void> => {
+  if (!replaceFile.value) {
+    error.value = '置き換える動画ファイルを選択してください'
+    return
+  }
+  if (replaceCodec.value === 'hevc') {
+    error.value = hevcUploadWarning
+    return
+  }
+  if (
+    !confirm(
+      '現在の動画ファイルを削除し、選択したファイルに置き換えます。再生位置もリセットされます。よろしいですか？',
+    )
+  ) {
+    return
+  }
+
+  replacingVideo.value = true
+  error.value = null
+  replaceProgress.value = '準備中...'
+
+  try {
+    const durationMs = await getVideoFileDurationMs(replaceFile.value)
+    replaceProgress.value = '旧ファイルを削除中...'
+
+    await prepareVideoReplace(videoId(), {
+      duration_ms: durationMs,
+      mime_type: replaceFile.value.type || 'video/mp4',
+    })
+
+    replaceProgress.value = 'アップロード中...'
+    await uploadVideoFile(videoId(), replaceFile.value, durationMs, (u, t) => {
+      replaceProgress.value = `アップロード中 ${u}/${t}`
+    })
+
+    replaceFile.value = null
+    replaceCodec.value = null
+    replaceCodecWarning.value = null
+    replaceProgress.value = ''
+    await load()
+    router.push(editMode.value ? '/' : `/videos/${videoId()}`)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '動画ファイルの置き換えに失敗しました'
+    replaceProgress.value = ''
+    await load()
+  } finally {
+    replacingVideo.value = false
   }
 }
 
@@ -203,11 +299,43 @@ const remove = async (): Promise<void> => {
 <template>
   <div class="container">
     <h1>動画編集</h1>
-    <p class="note">動画ファイルの入れ替えはできません。メタデータとサムネイルは変更できます。</p>
+    <p class="note">メタデータ・サムネイル・動画ファイルを変更できます。</p>
     <p v-if="error" class="error-banner">{{ error }}</p>
+    <p v-if="replaceProgress" class="progress-text">{{ replaceProgress }}</p>
     <p v-if="loading">読み込み中...</p>
 
     <form v-else class="card form" @submit.prevent="save">
+      <div class="field replace-field">
+        <label>動画ファイル (MP4)</label>
+        <p v-if="video" class="file-info">
+          現在: {{ formatFileSize(video.file_size_bytes) }}
+          ・ {{ formatDuration(video.duration_ms) }}
+          ・ {{ video.status }}
+        </p>
+        <input
+          type="file"
+          accept="video/mp4,video/*"
+          :disabled="replacingVideo || saving"
+          @change="onReplaceFileChange"
+        />
+        <p v-if="replaceCodec" class="codec-info">
+          選択ファイル: {{ mp4VideoCodecLabel(replaceCodec) }}
+        </p>
+        <p v-if="replaceCodecWarning" class="codec-warning">{{ replaceCodecWarning }}</p>
+        <p v-if="replaceCodecWarning" class="codec-command">
+          変換例: <code>{{ ffmpegH264Command() }}</code>
+        </p>
+        <button
+          v-if="replaceFile"
+          type="button"
+          class="btn btn-secondary"
+          :disabled="replacingVideo || saving || replaceCodec === 'hevc'"
+          @click="replaceVideoFile"
+        >
+          {{ replacingVideo ? '置き換え中...' : '動画ファイルを置き換え' }}
+        </button>
+      </div>
+
       <div class="field thumb-field">
         <label>サムネイル画像</label>
         <div class="thumb-preview">
@@ -381,5 +509,48 @@ h1 {
   margin: 8px 0 0;
   font-size: 0.8125rem;
   color: var(--muted);
+}
+
+.replace-field {
+  padding-bottom: 16px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.file-info {
+  margin: 0 0 8px;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.progress-text {
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.codec-info {
+  margin: 6px 0 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.codec-warning {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #fecaca;
+  font-size: 0.875rem;
+}
+
+.codec-command {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.codec-command code {
+  font-family: ui-monospace, monospace;
 }
 </style>
