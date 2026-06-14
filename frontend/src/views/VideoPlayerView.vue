@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchVideo } from '../api/movie'
 import { useVideoPlayer } from '../composables/useVideoPlayer'
@@ -28,24 +28,35 @@ const {
   onEnded,
   onWaiting,
   onPlaying,
+  cleanup,
 } = useVideoPlayer(videoEl)
 
 const videoId = computed(() => Number(props.id || route.params.id))
+let detailLoadId = 0
 
 const loadDetail = async (): Promise<void> => {
+  const loadId = detailLoadId
   pageError.value = null
   try {
     detail.value = await fetchVideo(videoId.value)
+    if (loadId !== detailLoadId) return
     if (detail.value.status !== 'ready') {
       pageError.value = 'この動画はまだ再生できません'
       return
     }
     await load(detail.value, true)
+    if (loadId !== detailLoadId) return
     seekValue.value = detail.value.position_ms ?? 0
   } catch (e) {
+    if (loadId !== detailLoadId) return
     pageError.value = e instanceof Error ? e.message : '動画の取得に失敗しました'
   }
 }
+
+onBeforeUnmount(() => {
+  detailLoadId += 1
+  cleanup()
+})
 
 onMounted(() => {
   void loadDetail()

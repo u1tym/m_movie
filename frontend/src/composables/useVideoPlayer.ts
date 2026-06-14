@@ -1,4 +1,4 @@
-import { ref, onUnmounted, type Ref } from 'vue'
+import { ref, onBeforeUnmount, type Ref } from 'vue'
 import {
   fetchNextVideo,
   getVideoStreamUrl,
@@ -9,6 +9,13 @@ import type { NextVideoBrief, VideoDetail } from '../types/movie'
 import { hevcPlaybackError } from '../utils/mp4Codec'
 
 const MEDIA_TIMEOUT_MS = 120_000
+
+class LoadAbortedError extends Error {
+  constructor() {
+    super('aborted')
+    this.name = 'LoadAbortedError'
+  }
+}
 
 const videoErrorMessage = (video: HTMLVideoElement): string => {
   const code = video.error?.code
@@ -28,8 +35,14 @@ const waitForMediaEvent = (
   video: HTMLVideoElement,
   eventName: 'loadedmetadata' | 'canplay' | 'seeked',
   timeoutMs = MEDIA_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<void> =>
   new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new LoadAbortedError())
+      return
+    }
+
     const ready =
       eventName === 'loadedmetadata'
         ? video.readyState >= HTMLMediaElement.HAVE_METADATA
@@ -43,44 +56,42 @@ const waitForMediaEvent = (
 
     let timeoutId: ReturnType<typeof setTimeout> | null = null
 
-    const cleanup = (): void => {
+    const removeListeners = (): void => {
       video.removeEventListener(eventName, onEvent)
       video.removeEventListener('error', onError)
+      signal?.removeEventListener('abort', onAbort)
       if (timeoutId !== null) {
         clearTimeout(timeoutId)
       }
     }
 
     const onEvent = (): void => {
-      cleanup()
+      removeListeners()
       resolve()
     }
     const onError = (): void => {
-      cleanup()
+      removeListeners()
       reject(new Error(videoErrorMessage(video)))
+    }
+    const onAbort = (): void => {
+      removeListeners()
+      reject(new LoadAbortedError())
     }
 
     video.addEventListener(eventName, onEvent)
     video.addEventListener('error', onError)
+    signal?.addEventListener('abort', onAbort)
     timeoutId = setTimeout(() => {
-      cleanup()
+      removeListeners()
       reject(new Error('動画の読み込みがタイムアウトしました'))
     }, timeoutMs)
   })
 
-const seekVideo = async (video: HTMLVideoElement, positionMs: number): Promise<void> => {
-  const targetSec = positionMs / 1000
-  if (Math.abs(video.currentTime - targetSec) < 0.5) {
-    return
-  }
-  const seekPromise = waitForMediaEvent(video, 'seeked', 30_000)
-  video.currentTime = targetSec
-  try {
-    await seekPromise
-  } catch {
-    // iOS 等で seeked が発火しない場合
-    await waitForMediaEvent(video, 'canplay', 30_000)
-  }
+const stopVideoElement = (video: HTMLVideoElement): void => {
+  video.pause()
+  video.removeAttribute('src')
+  video.src = ''
+  video.load()
 }
 
 export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
@@ -92,17 +103,29 @@ export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
 
   let saveTimer: ReturnType<typeof setInterval> | null = null
   let currentVideoId: number | null = null
+  let activeVideo: HTMLVideoElement | null = null
+  let sessionId = 0
+  let waitAbort: AbortController | null = null
+
+  const isActiveSession = (id: number): boolean => id === sessionId
 
   const cleanup = (): void => {
+    sessionId += 1
+    waitAbort?.abort()
+    waitAbort = null
+
     if (saveTimer) {
       clearInterval(saveTimer)
       saveTimer = null
     }
-    if (videoRef.value) {
-      videoRef.value.pause()
-      videoRef.value.removeAttribute('src')
-      videoRef.value.load()
+
+    const el = activeVideo ?? videoRef.value
+    if (el) {
+      stopVideoElement(el)
     }
+    activeVideo = null
+    currentVideoId = null
+    buffering.value = false
   }
 
   const savePosition = async (completed = false): Promise<void> => {
@@ -115,15 +138,42 @@ export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
     }
   }
 
+  const seekVideo = async (
+    video: HTMLVideoElement,
+    positionMs: number,
+    signal: AbortSignal,
+    id: number,
+  ): Promise<void> => {
+    const targetSec = positionMs / 1000
+    if (Math.abs(video.currentTime - targetSec) < 0.5) {
+      return
+    }
+    const seekPromise = waitForMediaEvent(video, 'seeked', 30_000, signal)
+    video.currentTime = targetSec
+    try {
+      await seekPromise
+    } catch (e) {
+      if (e instanceof LoadAbortedError || !isActiveSession(id)) {
+        throw e
+      }
+      await waitForMediaEvent(video, 'canplay', 30_000, signal)
+    }
+  }
+
   const load = async (detail: VideoDetail, resume = true): Promise<void> => {
     cleanup()
+    const id = sessionId
     loading.value = true
     error.value = null
-    buffering.value = false
-    currentVideoId = detail.video_id
+
+    const controller = new AbortController()
+    waitAbort = controller
+    const { signal } = controller
 
     try {
       const start = await startPlayback(detail.video_id, resume)
+      if (!isActiveSession(id)) return
+
       playbackInfo.value = {
         position_ms: start.position_ms,
         duration_ms: start.duration_ms,
@@ -132,31 +182,47 @@ export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
       const el = videoRef.value
       if (!el) return
 
-      // video 要素は fetch と違い Cookie を送れないことがあるため、
-      // playback/start で発行した stream_token を URL に付与する
+      activeVideo = el
+      currentVideoId = detail.video_id
+
       el.src = getVideoStreamUrl(detail.video_id, start.stream_token)
-      await waitForMediaEvent(el, 'loadedmetadata')
-      await waitForMediaEvent(el, 'canplay')
+      await waitForMediaEvent(el, 'loadedmetadata', MEDIA_TIMEOUT_MS, signal)
+      if (!isActiveSession(id)) return
+
+      await waitForMediaEvent(el, 'canplay', MEDIA_TIMEOUT_MS, signal)
+      if (!isActiveSession(id)) return
 
       if (start.position_ms > 0) {
-        await seekVideo(el, start.position_ms)
-        await waitForMediaEvent(el, 'canplay')
+        await seekVideo(el, start.position_ms, signal, id)
+        if (!isActiveSession(id)) return
+        await waitForMediaEvent(el, 'canplay', MEDIA_TIMEOUT_MS, signal)
+        if (!isActiveSession(id)) return
       }
 
       await el.play().catch(() => {
-        // 自動再生ブロックは許容（ユーザーが再生ボタンを押せる）
+        // 自動再生ブロックは許容
       })
+      if (!isActiveSession(id)) {
+        stopVideoElement(el)
+        return
+      }
 
       const next = await fetchNextVideo(detail.video_id)
+      if (!isActiveSession(id)) return
       nextVideo.value = next.has_next ? next.video : null
 
       saveTimer = setInterval(() => {
         void savePosition()
       }, 10000)
     } catch (e) {
+      if (e instanceof LoadAbortedError || !isActiveSession(id)) {
+        return
+      }
       error.value = e instanceof Error ? e.message : '再生の準備に失敗しました'
     } finally {
-      loading.value = false
+      if (isActiveSession(id)) {
+        loading.value = false
+      }
     }
   }
 
@@ -174,7 +240,13 @@ export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
   const seekTo = async (positionMs: number): Promise<void> => {
     const el = videoRef.value
     if (!el) return
-    await seekVideo(el, positionMs)
+    const controller = new AbortController()
+    try {
+      await seekVideo(el, positionMs, controller.signal, sessionId)
+    } catch (e) {
+      if (e instanceof LoadAbortedError) return
+      throw e
+    }
     await savePosition()
   }
 
@@ -194,7 +266,7 @@ export const useVideoPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
     buffering.value = false
   }
 
-  onUnmounted(cleanup)
+  onBeforeUnmount(cleanup)
 
   return {
     loading,
