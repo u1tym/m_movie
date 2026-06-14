@@ -142,7 +142,7 @@ const submit = async (): Promise<void> => {
       await uploadThumbnail(created.video_id, thumbFile.value, thumbFile.value.type || 'image/jpeg')
     }
 
-    router.push(`/videos/${created.video_id}`)
+    router.push('/')
   } catch (e) {
     error.value = e instanceof Error ? e.message : '登録に失敗しました'
   } finally {

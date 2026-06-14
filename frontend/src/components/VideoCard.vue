@@ -5,7 +5,10 @@ import { fetchThumbnailBlob } from '../api/movie'
 import { formatMs } from '../config'
 import type { VideoSummary } from '../types/movie'
 
-const props = defineProps<{ video: VideoSummary }>()
+const props = defineProps<{
+  video: VideoSummary
+  editMode?: boolean
+}>()
 const router = useRouter()
 const thumbUrl = ref<string | null>(null)
 
@@ -38,6 +41,10 @@ onUnmounted(() => {
 })
 
 const open = (): void => {
+  if (props.editMode) {
+    router.push(`/videos/${props.video.video_id}/edit`)
+    return
+  }
   if (props.video.status === 'ready') {
     router.push(`/videos/${props.video.video_id}`)
   }
@@ -45,7 +52,7 @@ const open = (): void => {
 </script>
 
 <template>
-  <article class="card video-card" @click="open">
+  <article class="card video-card" :class="{ 'video-card-edit': editMode }" @click="open">
     <div class="thumb">
       <img v-if="thumbUrl" :src="thumbUrl" :alt="video.title" />
       <div v-else class="thumb-placeholder">No Image</div>
@@ -69,6 +76,11 @@ const open = (): void => {
   cursor: pointer;
   overflow: hidden;
   padding: 0;
+}
+
+.video-card-edit {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .thumb {

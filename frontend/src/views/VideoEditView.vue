@@ -10,10 +10,12 @@ import {
   updateVideo,
 } from '../api/movie'
 import type { Genre, Series, VideoDetail } from '../types/movie'
+import { useEditMode } from '../composables/useEditMode'
 
 const props = defineProps<{ id: string }>()
 const route = useRoute()
 const router = useRouter()
+const { editMode } = useEditMode()
 
 const video = ref<VideoDetail | null>(null)
 const genres = ref<Genre[]>([])
@@ -97,7 +99,7 @@ const save = async (): Promise<void> => {
       sort_order: sortOrder.value,
       genre_ids: selectedGenreIds.value,
     })
-    router.push(`/videos/${videoId()}`)
+    router.push(editMode.value ? '/' : `/videos/${videoId()}`)
   } catch (e) {
     error.value = e instanceof Error ? e.message : '更新に失敗しました'
   } finally {

@@ -2,7 +2,10 @@
 import { onMounted, ref, watch } from 'vue'
 import { fetchGenres, fetchVideos } from '../api/movie'
 import VideoCard from '../components/VideoCard.vue'
+import { useEditMode } from '../composables/useEditMode'
 import type { Genre, VideoSummary } from '../types/movie'
+
+const { editMode, toggleEditMode } = useEditMode()
 
 const videos = ref<VideoSummary[]>([])
 const genres = ref<Genre[]>([])
@@ -63,7 +66,18 @@ onMounted(() => {
 <template>
   <div class="container">
     <div class="toolbar">
-      <h1>動画一覧</h1>
+      <div class="toolbar-head">
+        <h1>動画一覧</h1>
+        <button
+          type="button"
+          class="btn"
+          :class="editMode ? 'btn-edit-on' : 'btn-secondary'"
+          @click="toggleEditMode"
+        >
+          {{ editMode ? '編集 ON' : '編集' }}
+        </button>
+      </div>
+      <p v-if="editMode" class="edit-hint">編集モード: 動画をタップすると編集画面を開きます</p>
       <div class="filters">
         <input
           v-model="searchQuery"
@@ -106,7 +120,7 @@ onMounted(() => {
     </div>
 
     <div v-else class="grid">
-      <VideoCard v-for="v in videos" :key="v.video_id" :video="v" />
+      <VideoCard v-for="v in videos" :key="v.video_id" :video="v" :edit-mode="editMode" />
     </div>
 
     <div v-if="totalPages > 1" class="pager">
@@ -118,9 +132,32 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.toolbar h1 {
-  margin: 0 0 12px;
+.toolbar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.toolbar-head h1 {
+  margin: 0;
   font-size: 1.5rem;
+}
+
+.btn-edit-on {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--accent);
+}
+
+.edit-hint {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(59, 130, 246, 0.12);
+  color: #bfdbfe;
+  font-size: 0.875rem;
 }
 
 .filters {

@@ -10,10 +10,16 @@ const props = defineProps<{ id: string }>()
 const route = useRoute()
 const router = useRouter()
 
+const VOLUME_KEY = 'm-movie-volume'
+const MUTE_KEY = 'm-movie-muted'
+
 const videoEl = ref<HTMLVideoElement | null>(null)
 const detail = ref<VideoDetail | null>(null)
 const pageError = ref<string | null>(null)
 const seekValue = ref(0)
+const volume = ref(Number(localStorage.getItem(VOLUME_KEY) ?? '1'))
+const muted = ref(localStorage.getItem(MUTE_KEY) === 'true')
+const volumeBeforeMute = ref(volume.value > 0 ? volume.value : 1)
 
 const {
   loading,
@@ -84,6 +90,46 @@ const goNext = (): void => {
 const goEdit = (): void => {
   router.push(`/videos/${videoId.value}/edit`)
 }
+
+const applyAudioSettings = (): void => {
+  const el = videoEl.value
+  if (!el) return
+  el.volume = volume.value
+  el.muted = muted.value
+}
+
+const onVolumeInput = (): void => {
+  if (volume.value > 0) {
+    volumeBeforeMute.value = volume.value
+    muted.value = false
+  }
+  localStorage.setItem(VOLUME_KEY, String(volume.value))
+  localStorage.setItem(MUTE_KEY, muted.value ? 'true' : 'false')
+  applyAudioSettings()
+}
+
+const toggleMute = (): void => {
+  if (muted.value) {
+    muted.value = false
+    if (volume.value === 0) {
+      volume.value = volumeBeforeMute.value
+    }
+  } else {
+    if (volume.value > 0) {
+      volumeBeforeMute.value = volume.value
+    }
+    muted.value = true
+  }
+  localStorage.setItem(VOLUME_KEY, String(volume.value))
+  localStorage.setItem(MUTE_KEY, muted.value ? 'true' : 'false')
+  applyAudioSettings()
+}
+
+watch(videoEl, (el) => {
+  if (el) {
+    applyAudioSettings()
+  }
+})
 </script>
 
 <template>
@@ -132,6 +178,21 @@ const goEdit = (): void => {
         <button class="btn btn-secondary" @click="togglePlay">再生 / 一時停止</button>
         <button v-if="nextVideo" class="btn" @click="goNext">次の動画</button>
         <button class="btn btn-ghost" @click="goEdit">編集</button>
+      </div>
+      <div class="volume-row">
+        <button type="button" class="btn btn-ghost mute-btn" @click="toggleMute">
+          {{ muted ? 'ミュート解除' : 'ミュート' }}
+        </button>
+        <input
+          v-model.number="volume"
+          class="volume"
+          type="range"
+          min="0"
+          max="1"
+          step="0.05"
+          aria-label="音量"
+          @input="onVolumeInput"
+        />
       </div>
     </div>
   </div>
@@ -199,5 +260,22 @@ const goEdit = (): void => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.volume-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.mute-btn {
+  flex-shrink: 0;
+  min-width: 100px;
+}
+
+.volume {
+  flex: 1;
+  min-width: 0;
 }
 </style>
