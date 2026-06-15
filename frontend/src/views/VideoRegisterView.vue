@@ -19,6 +19,7 @@ import {
   mp4VideoCodecLabel,
   type Mp4VideoCodec,
 } from '../utils/mp4Codec'
+import { generateDefaultThumbnail } from '../utils/videoThumbnail'
 
 const router = useRouter()
 
@@ -140,6 +141,10 @@ const submit = async (): Promise<void> => {
     if (thumbFile.value) {
       progress.value = 'サムネイル登録中...'
       await uploadThumbnail(created.video_id, thumbFile.value, thumbFile.value.type || 'image/jpeg')
+    } else {
+      progress.value = 'サムネイル生成中...'
+      const thumb = await generateDefaultThumbnail(file.value, durationMs)
+      await uploadThumbnail(created.video_id, thumb, 'image/jpeg')
     }
 
     router.push('/')
@@ -185,6 +190,7 @@ const submit = async (): Promise<void> => {
       <div class="field">
         <label>サムネイル画像</label>
         <input type="file" accept="image/*" @change="onThumbChange" />
+        <p class="thumb-hint">未指定の場合、5秒地点（5秒未満の動画は先頭フレーム）を自動でサムネイルにします</p>
       </div>
 
       <div class="field">
@@ -324,6 +330,12 @@ h1 {
 
 .codec-hint {
   margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.thumb-hint {
+  margin: 6px 0 0;
   font-size: 0.75rem;
   color: var(--muted);
 }
