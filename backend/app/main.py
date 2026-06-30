@@ -8,7 +8,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import settings
 from app.dependencies import app_error_handler, http_exception_handler, validation_exception_handler, AppError
-from app.routers import genres, playback, series, videos
+from app.routers import genres, playback, playlists, series, videos
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -44,6 +44,7 @@ API_PREFIX = "/api/v1/movie"
 app.include_router(genres.router, prefix=API_PREFIX)
 app.include_router(series.router, prefix=API_PREFIX)
 app.include_router(videos.router, prefix=API_PREFIX)
+app.include_router(playlists.router, prefix=API_PREFIX)
 app.include_router(playback.router, prefix=API_PREFIX)
 
 

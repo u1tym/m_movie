@@ -62,6 +62,7 @@ copy .env.example .env      # Windows
 
 ```bash
 psql -U tamtuser -d tamtdb -f ../DB/1_db.sql
+psql -U tamtuser -d tamtdb -f ../DB/2_playlist.sql
 ```
 
 `DEBUG_AID` に指定した ID が `public.accounts` に存在する必要があります。
@@ -121,7 +122,11 @@ Movie API started: DEBUG=True, DEBUG_AID=1, env_file=D:\...\backend\.env
 | POST | `/videos/{id}/complete` | アップロード完了 |
 | GET | `/videos/{id}/chunks/{index}` | チャンク取得 |
 | POST | `/videos/{id}/playback/start` | 再生開始 |
-| PUT | `/videos/{id}/playback/state` | 再生位置保存 |
+| POST | `/playlists` | プレイリスト作成 |
+| GET | `/playlists` | プレイリスト一覧 |
+| PUT | `/playlists/{id}/items` | 動画リスト更新 |
+| POST | `/playlists/{id}/playback/start` | プレイリスト再生開始 |
+| GET | `/playback/last` | 続きから視聴用の最終再生情報 |
 
 一覧は `API_MOVIE_SPEC.md` を参照してください。
 

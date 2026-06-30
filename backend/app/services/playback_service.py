@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.dependencies import AppError
 from app.models import PlaybackState, Video
@@ -20,7 +20,7 @@ from app.schemas.playback import (
     PlaybackStateUpdateRequest,
 )
 from app.schemas import normalize_page, build_pagination
-from app.security.stream_token import create_stream_token
+from app.services.playback_context_service import upsert_playlist_context, upsert_video_context
 from app.services.video_service import (
     _get_owned_video,
     chunk_to_meta,
@@ -62,6 +62,7 @@ def start_playback(
     playback.play_count += 1
     playback.last_played_at = now
     playback.updated_at = now
+    upsert_video_context(db, aid, video_id, position_ms)
     db.commit()
 
     return PlaybackStartResponse(
@@ -168,6 +169,12 @@ def update_playback_state(
         )
     )
     db.execute(stmt)
+    if body.playlist_id is not None and body.playlist_item_id is not None:
+        upsert_playlist_context(
+            db, aid, body.playlist_id, body.playlist_item_id, body.position_ms
+        )
+    else:
+        upsert_video_context(db, aid, video_id, body.position_ms)
     db.commit()
     return get_playback_state(db, aid, video_id)
 
@@ -243,3 +250,61 @@ def list_history(db: Session, aid: int, page: int, per_page: int) -> HistoryList
         items=items,
         pagination=PaginationMeta(**build_pagination(page, per_page, total_count).model_dump()),
     )
+
+
+def get_last_playback(db: Session, aid: int):
+    from app.models import PlaybackContext
+    from app.schemas.playback_context import (
+        LastPlaybackResponse,
+        LastPlaylistContextResponse,
+        LastVideoContextResponse,
+    )
+
+    ctx = db.get(PlaybackContext, aid)
+    if ctx is None:
+        return LastPlaybackResponse()
+
+    video_ctx = None
+    if ctx.last_video_id is not None and ctx.last_video_updated_at is not None:
+        video = db.get(Video, ctx.last_video_id)
+        if video is not None and video.aid == aid and video.status == "ready":
+            video_ctx = LastVideoContextResponse(
+                video_id=video.video_id,
+                title=video.title,
+                duration_ms=video.duration_ms,
+                position_ms=ctx.last_video_position_ms,
+                updated_at=ctx.last_video_updated_at,
+            )
+
+    playlist_ctx = None
+    if (
+        ctx.last_playlist_id is not None
+        and ctx.last_playlist_item_id is not None
+        and ctx.last_playlist_updated_at is not None
+    ):
+        from app.models import Playlist, PlaylistItem
+
+        playlist = db.get(Playlist, ctx.last_playlist_id)
+        item = db.scalars(
+            select(PlaylistItem)
+            .options(joinedload(PlaylistItem.video))
+            .where(PlaylistItem.playlist_item_id == ctx.last_playlist_item_id)
+        ).first()
+        if (
+            playlist is not None
+            and playlist.aid == aid
+            and item is not None
+            and item.video.status == "ready"
+        ):
+            playlist_ctx = LastPlaylistContextResponse(
+                playlist_id=playlist.playlist_id,
+                playlist_name=playlist.name,
+                playlist_item_id=item.playlist_item_id,
+                video_id=item.video_id,
+                video_title=item.video.title,
+                duration_ms=item.video.duration_ms,
+                position_ms=ctx.last_playlist_position_ms,
+                updated_at=ctx.last_playlist_updated_at,
+            )
+
+    return LastPlaybackResponse(video=video_ctx, playlist=playlist_ctx)

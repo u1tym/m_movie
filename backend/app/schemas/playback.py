@@ -37,6 +37,8 @@ class PlaybackSeekResponse(BaseModel):
 class PlaybackStateUpdateRequest(BaseModel):
     position_ms: int = Field(ge=0)
     completed: bool | None = None
+    playlist_id: int | None = None
+    playlist_item_id: int | None = None
 
 
 class PlaybackStateResponse(BaseModel):

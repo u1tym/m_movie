@@ -12,6 +12,7 @@ from app.schemas.playback import (
     PlaybackStateResponse,
     PlaybackStateUpdateRequest,
 )
+from app.schemas.playback_context import LastPlaybackResponse
 from app.services import playback_service
 
 router = APIRouter(tags=["playback"])
@@ -75,3 +76,11 @@ def list_history(
     aid: int = Depends(get_aid_dependency()),
 ) -> HistoryListResponse:
     return playback_service.list_history(db, aid, page, per_page)
+
+
+@router.get("/playback/last", response_model=LastPlaybackResponse)
+def get_last_playback(
+    db: Session = Depends(get_db),
+    aid: int = Depends(get_aid_dependency()),
+) -> LastPlaybackResponse:
+    return playback_service.get_last_playback(db, aid)

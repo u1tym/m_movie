@@ -13,6 +13,7 @@ const menuUrl = '/mobile/login/#/menu'
       </div>
       <nav class="nav">
         <RouterLink to="/">一覧</RouterLink>
+        <RouterLink to="/playlists">プレイリスト</RouterLink>
         <RouterLink to="/register">登録</RouterLink>
         <RouterLink to="/genres">ジャンル</RouterLink>
       </nav>

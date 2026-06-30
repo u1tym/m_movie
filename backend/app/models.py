@@ -61,6 +61,66 @@ class Video(Base):
     playback_states: Mapped[list["PlaybackState"]] = relationship(
         back_populates="video", cascade="all, delete-orphan"
     )
+    playlist_items: Mapped[list["PlaylistItem"]] = relationship(back_populates="video")
+
+
+class Playlist(Base):
+    __tablename__ = "playlist"
+    __table_args__ = {"schema": "movie"}
+
+    playlist_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    aid: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    items: Mapped[list["PlaylistItem"]] = relationship(
+        back_populates="playlist", cascade="all, delete-orphan", order_by="PlaylistItem.sort_order"
+    )
+
+
+class PlaylistItem(Base):
+    __tablename__ = "playlist_item"
+    __table_args__ = {"schema": "movie"}
+
+    playlist_item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    playlist_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("movie.playlist.playlist_id", ondelete="CASCADE"), nullable=False
+    )
+    video_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("movie.video.video_id", ondelete="CASCADE"), nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    playlist: Mapped[Playlist] = relationship(back_populates="items")
+    video: Mapped[Video] = relationship(back_populates="playlist_items")
+
+
+class PlaybackContext(Base):
+    __tablename__ = "playback_context"
+    __table_args__ = {"schema": "movie"}
+
+    aid: Mapped[int] = mapped_column(Integer, primary_key=True)
+    last_video_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("movie.video.video_id", ondelete="SET NULL"), nullable=True
+    )
+    last_video_position_ms: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    last_video_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_playlist_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("movie.playlist.playlist_id", ondelete="SET NULL"), nullable=True
+    )
+    last_playlist_item_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("movie.playlist_item.playlist_item_id", ondelete="SET NULL"), nullable=True
+    )
+    last_playlist_position_ms: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    last_playlist_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    last_video: Mapped[Video | None] = relationship(foreign_keys=[last_video_id])
+    last_playlist: Mapped[Playlist | None] = relationship(foreign_keys=[last_playlist_id])
+    last_playlist_item: Mapped[PlaylistItem | None] = relationship(foreign_keys=[last_playlist_item_id])
 
 
 class VideoGenre(Base):

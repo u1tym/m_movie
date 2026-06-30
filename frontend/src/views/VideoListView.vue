@@ -1,9 +1,15 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { fetchLastPlayback } from '../api/playlist'
 import { fetchGenres, fetchVideos } from '../api/movie'
 import VideoCard from '../components/VideoCard.vue'
 import { useEditMode } from '../composables/useEditMode'
+import { formatMs } from '../config'
+import type { LastPlayback } from '../types/playlist'
 import type { Genre, VideoSummary } from '../types/movie'
+
+const router = useRouter()
 
 const { editMode, toggleEditMode } = useEditMode()
 
@@ -16,6 +22,7 @@ const totalPages = ref(1)
 const selectedGenreId = ref<number | undefined>(undefined)
 const searchQuery = ref('')
 const statusFilter = ref<string | undefined>(undefined)
+const lastPlayback = ref<LastPlayback | null>(null)
 
 const load = async (): Promise<void> => {
   loading.value = true
@@ -60,7 +67,20 @@ watch([page], () => {
 onMounted(() => {
   void loadGenres()
   void load()
+  void fetchLastPlayback().then((r) => { lastPlayback.value = r }).catch(() => {})
 })
+
+const continueVideo = (): void => {
+  if (lastPlayback.value?.video) {
+    router.push(`/videos/${lastPlayback.value.video.video_id}`)
+  }
+}
+
+const continuePlaylist = (): void => {
+  if (lastPlayback.value?.playlist) {
+    router.push(`/playlists/${lastPlayback.value.playlist.playlist_id}/play`)
+  }
+}
 </script>
 
 <template>
@@ -112,6 +132,32 @@ onMounted(() => {
       </div>
     </div>
 
+    <section
+      v-if="lastPlayback?.video || lastPlayback?.playlist"
+      class="continue card"
+    >
+      <h2>続きから視聴</h2>
+      <div v-if="lastPlayback?.video" class="continue-item">
+        <div>
+          <p class="continue-label">動画</p>
+          <p class="continue-title">{{ lastPlayback.video.title }}</p>
+          <p class="continue-meta">{{ formatMs(lastPlayback.video.position_ms) }} から</p>
+        </div>
+        <button class="btn" @click="continueVideo">再生</button>
+      </div>
+      <div v-if="lastPlayback?.playlist" class="continue-item">
+        <div>
+          <p class="continue-label">プレイリスト</p>
+          <p class="continue-title">{{ lastPlayback.playlist.playlist_name }}</p>
+          <p class="continue-meta">
+            {{ lastPlayback.playlist.video_title }} ·
+            {{ formatMs(lastPlayback.playlist.position_ms) }} から
+          </p>
+        </div>
+        <button class="btn" @click="continuePlaylist">再生</button>
+      </div>
+    </section>
+
     <p v-if="error" class="error-banner">{{ error }}</p>
     <p v-if="loading">読み込み中...</p>
 
@@ -132,6 +178,46 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.continue {
+  margin-bottom: 16px;
+}
+
+.continue h2 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+}
+
+.continue-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.continue-item:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.continue-label {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.continue-title {
+  margin: 2px 0;
+  font-weight: 600;
+}
+
+.continue-meta {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
 .toolbar-head {
   display: flex;
   align-items: center;
