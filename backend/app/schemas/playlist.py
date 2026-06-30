@@ -72,10 +72,16 @@ class PlaylistPlaybackItemResponse(BaseModel):
     stream_token: str
     start_chunk: "ChunkMetaResponse"
     has_next: bool
+    has_prev: bool
 
 
 class PlaylistNextItemResponse(BaseModel):
     has_next: bool
+    item: PlaylistPlaybackItemResponse | None
+
+
+class PlaylistPrevItemResponse(BaseModel):
+    has_prev: bool
     item: PlaylistPlaybackItemResponse | None
 
 

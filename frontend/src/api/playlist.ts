@@ -55,6 +55,12 @@ export const fetchNextPlaylistItem = (
 ): Promise<{ has_next: boolean; item: PlaylistPlaybackItem | null }> =>
   movieRequest(`/playlists/${playlistId}/items/${playlistItemId}/next`)
 
+export const fetchPrevPlaylistItem = (
+  playlistId: number,
+  playlistItemId: number,
+): Promise<{ has_prev: boolean; item: PlaylistPlaybackItem | null }> =>
+  movieRequest(`/playlists/${playlistId}/items/${playlistItemId}/prev`)
+
 export const savePlaylistPlaybackState = (
   playlistId: number,
   playlistItemId: number,

@@ -1,6 +1,7 @@
 import { ref, onBeforeUnmount, type Ref } from 'vue'
 import {
   fetchNextPlaylistItem,
+  fetchPrevPlaylistItem,
   savePlaylistPlaybackState,
   startPlaylistPlayback,
 } from '../api/playlist'
@@ -99,6 +100,24 @@ export const usePlaylistPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
     }
   }
 
+  const seekVideo = async (
+    video: HTMLVideoElement,
+    positionMs: number,
+    signal: AbortSignal,
+    id: number,
+  ): Promise<void> => {
+    const targetSec = positionMs / 1000
+    if (Math.abs(video.currentTime - targetSec) < 0.5) return
+    const seekPromise = waitForMediaEvent(video, 'seeked', 30_000, signal)
+    video.currentTime = targetSec
+    try {
+      await seekPromise
+    } catch (e) {
+      if (e instanceof LoadAbortedError || sessionId !== id) throw e
+      await waitForMediaEvent(video, 'canplay', MEDIA_TIMEOUT_MS, signal)
+    }
+  }
+
   const loadItem = async (item: PlaylistPlaybackItem, fromStart: boolean): Promise<void> => {
     const id = sessionId
     loading.value = true
@@ -116,12 +135,15 @@ export const usePlaylistPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
       const positionMs = fromStart ? 0 : item.position_ms
       el.src = getVideoStreamUrl(item.video_id, item.stream_token)
       await waitForMediaEvent(el, 'loadedmetadata', MEDIA_TIMEOUT_MS, signal)
+      if (sessionId !== id) return
       await waitForMediaEvent(el, 'canplay', MEDIA_TIMEOUT_MS, signal)
+      if (sessionId !== id) return
 
       if (positionMs > 0) {
-        el.currentTime = positionMs / 1000
-        await waitForMediaEvent(el, 'seeked', 30_000, signal)
+        await seekVideo(el, positionMs, signal, id)
+        if (sessionId !== id) return
         await waitForMediaEvent(el, 'canplay', MEDIA_TIMEOUT_MS, signal)
+        if (sessionId !== id) return
       }
 
       await el.play().catch(() => {})
@@ -139,11 +161,43 @@ export const usePlaylistPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
     playlistId.value = id
     sessionId += 1
     try {
-    const item = await startPlaylistPlayback(id, resume)
-    await loadItem(item, item.position_ms === 0)
+      const item = await startPlaylistPlayback(id, resume)
+      await loadItem(item, item.position_ms === 0)
       saveTimer = setInterval(() => { void savePosition() }, 10000)
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'プレイリスト再生の開始に失敗しました'
+    }
+  }
+
+  const playNext = async (): Promise<void> => {
+    if (!playlistId.value || !currentItem.value) return
+    await savePosition()
+    try {
+      const next = await fetchNextPlaylistItem(
+        playlistId.value,
+        currentItem.value.playlist_item_id,
+      )
+      if (next.has_next && next.item) {
+        await loadItem(next.item, true)
+      }
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : '次の動画の取得に失敗しました'
+    }
+  }
+
+  const playPrev = async (): Promise<void> => {
+    if (!playlistId.value || !currentItem.value) return
+    await savePosition()
+    try {
+      const prev = await fetchPrevPlaylistItem(
+        playlistId.value,
+        currentItem.value.playlist_item_id,
+      )
+      if (prev.has_prev && prev.item) {
+        await loadItem(prev.item, true)
+      }
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : '前の動画の取得に失敗しました'
     }
   }
 
@@ -177,7 +231,31 @@ export const usePlaylistPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
     }
   }
 
-  onBeforeUnmount(cleanup)
+  const seekTo = async (positionMs: number): Promise<void> => {
+    const el = videoRef.value
+    if (!el) return
+    const controller = new AbortController()
+    try {
+      await seekVideo(el, positionMs, controller.signal, sessionId)
+    } catch (e) {
+      if (e instanceof LoadAbortedError) return
+      throw e
+    }
+    await savePosition()
+  }
+
+  const onWaiting = (): void => {
+    buffering.value = true
+  }
+
+  const onPlaying = (): void => {
+    buffering.value = false
+  }
+
+  onBeforeUnmount(() => {
+    void savePosition()
+    cleanup()
+  })
 
   return {
     loading,
@@ -185,10 +263,15 @@ export const usePlaylistPlayer = (videoRef: Ref<HTMLVideoElement | null>) => {
     currentItem,
     buffering,
     start,
+    playNext,
+    playPrev,
     onEnded,
     onPause: savePosition,
     togglePlay,
+    seekTo,
     savePosition,
+    onWaiting,
+    onPlaying,
     cleanup,
   }
 }

@@ -16,6 +16,7 @@ from app.schemas.playlist import (
     PlaylistNextItemResponse,
     PlaylistPlaybackItemResponse,
     PlaylistPlaybackStartRequest,
+    PlaylistPrevItemResponse,
     PlaylistSummaryResponse,
     PlaylistUpdateRequest,
 )
@@ -194,6 +195,12 @@ def _build_playback_item(
             PlaylistItem.sort_order > item.sort_order,
         ))
     )
+    has_prev = db.scalar(
+        select(exists().where(
+            PlaylistItem.playlist_id == playlist_id,
+            PlaylistItem.sort_order < item.sort_order,
+        ))
+    )
 
     return PlaylistPlaybackItemResponse(
         playlist_id=playlist_id,
@@ -214,6 +221,7 @@ def _build_playback_item(
             byte_length=chunk.byte_length,
         ),
         has_next=bool(has_next),
+        has_prev=bool(has_prev),
     )
 
 
@@ -278,6 +286,30 @@ def get_next_playlist_item(
     upsert_playlist_context(db, aid, playlist_id, nxt.playlist_item_id, 0)
     db.commit()
     return PlaylistNextItemResponse(has_next=True, item=item)
+
+
+def get_prev_playlist_item(
+    db: Session, aid: int, playlist_id: int, current_item_id: int
+) -> PlaylistPrevItemResponse:
+    current = _get_item_in_playlist(db, aid, playlist_id, current_item_id)
+    prev = db.scalars(
+        select(PlaylistItem)
+        .options(joinedload(PlaylistItem.video))
+        .where(
+            PlaylistItem.playlist_id == playlist_id,
+            PlaylistItem.sort_order < current.sort_order,
+        )
+        .order_by(PlaylistItem.sort_order.desc())
+        .limit(1)
+    ).first()
+
+    if prev is None:
+        return PlaylistPrevItemResponse(has_prev=False, item=None)
+
+    item = _build_playback_item(db, aid, playlist_id, prev, 0)
+    upsert_playlist_context(db, aid, playlist_id, prev.playlist_item_id, 0)
+    db.commit()
+    return PlaylistPrevItemResponse(has_prev=True, item=item)
 
 
 def save_playlist_playback_state(

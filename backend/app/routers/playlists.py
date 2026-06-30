@@ -11,6 +11,7 @@ from app.schemas.playlist import (
     PlaylistNextItemResponse,
     PlaylistPlaybackItemResponse,
     PlaylistPlaybackStartRequest,
+    PlaylistPrevItemResponse,
     PlaylistUpdateRequest,
 )
 from app.services import playlist_service
@@ -93,6 +94,16 @@ def get_next_playlist_item(
     aid: int = Depends(get_aid_dependency()),
 ) -> PlaylistNextItemResponse:
     return playlist_service.get_next_playlist_item(db, aid, playlist_id, playlist_item_id)
+
+
+@router.get("/{playlist_id}/items/{playlist_item_id}/prev", response_model=PlaylistPrevItemResponse)
+def get_prev_playlist_item(
+    playlist_id: int,
+    playlist_item_id: int,
+    db: Session = Depends(get_db),
+    aid: int = Depends(get_aid_dependency()),
+) -> PlaylistPrevItemResponse:
+    return playlist_service.get_prev_playlist_item(db, aid, playlist_id, playlist_item_id)
 
 
 @router.put("/{playlist_id}/items/{playlist_item_id}/playback/state", status_code=204)

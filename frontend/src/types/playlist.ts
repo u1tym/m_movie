@@ -45,6 +45,7 @@ export interface PlaylistPlaybackItem {
     byte_length: number
   }
   has_next: boolean
+  has_prev: boolean
 }
 
 export interface LastVideoContext {
